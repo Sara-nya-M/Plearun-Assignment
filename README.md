@@ -10,9 +10,11 @@ python -m unittest discover -s tests -v
 
 Findings with `match` or `conflict` pass through `make_finding`, which checks
 that the cited row exists and the quote is an exact substring of its raw text.
-The decision logic only aligns explicit event-time notes; it leaves claims
-unsettled when the available sources do not provide a reliable shared clock or
-event anchor. Record text is parsed as data and never treated as instructions.
+Clock offsets are estimated only from at least three unique, exact, unhedged
+event-time claims other than the claim being evaluated. The corresponding
+record events must be unambiguous and their offsets consistent. Otherwise the
+clock is not aligned. Record text is parsed as data and never treated as
+instructions.
 
 ## Three hardest decisions
 
@@ -26,9 +28,10 @@ event anchor. Record text is parsed as data and never treated as instructions.
 
 The claim extraction is pattern-based and will miss varied phrasing. The
 decision logic is deliberately conservative, so some true claims remain
-unsettled; it currently cannot safely align the speed, dispatch, and transcript
-records in the sample. On real records, schema drift and missing or misleading
-clock anchors would likely break reliable decisions first.
+unsettled; the sample does not provide enough consistent independent anchors
+to align its speed, dispatch, and transcript clocks. On real records, schema
+drift and missing or misleading clock anchors would likely break reliable
+decisions first.
 
 ## Tools
 

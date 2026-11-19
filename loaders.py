@@ -55,6 +55,7 @@ def load_camera(path):
             continue
         rows.append({
             "file": "camera_log.csv", "row": number, "raw": line,
+            "clock_id": "camera:%s" % fields[1],
             "time": parse_time(fields[0]), "device": fields[1],
             "speed": speed, "zone": zone,
         })
@@ -104,6 +105,7 @@ def load_dispatch(path):
         logged = event.get("logged")
         rows.append({
             "file": "dispatch.json", "row": number, "raw": raw,
+            "clock_id": "dispatch",
             "time": parse_time(logged) if logged is not None else None,
             "naive_time": parse_naive(logged) if logged is not None else None,
             "type": event.get("type"), "id": event.get("id"),
@@ -148,6 +150,7 @@ def load_notes(path):
             clock = None
         rows.append({
             "file": path.replace("\\", "/").split("/")[-1], "row": start, "raw": raw,
+            "clock_id": "notes:%s" % path.replace("\\", "/").split("/")[-1],
             "id": record.get("ID"), "author": record.get("Author"),
             "note": record.get("Note"), "clock": clock,
         })
@@ -201,6 +204,7 @@ def load_vtt(path):
             number = counter
         rows.append({
             "file": path.replace("\\", "/").split("/")[-1], "row": number, "raw": block,
+            "clock_id": "vtt:%s" % path.replace("\\", "/").split("/")[-1],
             "start": start, "end": end, "text": "\n".join(lines[i + 1:]),
         })
     return rows
