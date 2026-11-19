@@ -29,6 +29,7 @@ class ClaimTests(unittest.TestCase):
     def test_speed_claim(self):
         c = self.claims[1]
         self.assertEqual((c["kind"], c["speed"], c["zone"]), ("speed", 58, 45))
+        self.assertEqual(c["context_time"], {"hour": 21, "minute": 14, "approx": True})
 
     def test_time_claims(self):
         times = [(c["event"], c["hour"], c["minute"], c["approx"])

@@ -1,11 +1,21 @@
 import re
 
+from claims import INTERVAL_RE
 from findings import build_index, make_finding
-from offsets import clock_domain, clock_reading, estimate_report_offsets, event_of
+from offsets import (
+    clock_domain,
+    clock_reading,
+    estimate_report_offsets,
+    event_of,
+    speed_zone,
+)
 
 
 _TIME_RE = re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b")
 _HEDGE_RE = re.compile(r"\b(?:about|around|roughly|approximately|approx|nearly)\b|~", re.I)
+_NEGATION_RE = re.compile(r"\b(?:not|never|isn't|wasn't|didn't|incorrectly)\b", re.I)
+_STOP_RE = re.compile(r"\bstop(?:ped|ping)?\b|\bpulling in\b|\bpulled (?:in|over|into)\b", re.I)
+_SCENE_RE = re.compile(r"\bon scene\b|\barriv(?:ed|al)\b", re.I)
 
 
 def _minute_of_day(match):
@@ -87,6 +97,81 @@ def _decide_time(claim, note_rows, rows, index, claims, claim_index):
     return make_finding(claim["claim"], "not_settled", index)
 
 
+def _decide_speed(claim, rows, index, claims, claim_index):
+    context = claim.get("context_time")
+    if not isinstance(context, dict) or claim.get("zone") is None:
+        return make_finding(claim["claim"], "not_settled", index)
+
+    offsets = estimate_report_offsets(claims, rows, claim_index)
+    target = int(context["hour"]) * 3600 + int(context["minute"]) * 60
+    aligned = []
+    for row in rows:
+        text = row.get("text")
+        if (not isinstance(text, str)
+                or not re.search(r"^\s*(?:\[SYNTHETIC\]\s*)?Officer Lee\s*:", text, re.I)
+                or _NEGATION_RE.search(text)
+                or speed_zone(row) != (claim["speed"], claim["zone"])):
+            continue
+        estimate = offsets.get(clock_domain(row))
+        reading = clock_reading(row)
+        if estimate is None or estimate[1] != "ok" or reading is None:
+            continue
+        offset, _, offset_uncertainty = estimate
+        if offset is None:
+            continue
+        observed = (reading[0] - offset) % (24 * 60 * 60)
+        distance = min(abs(target - observed), 24 * 60 * 60 - abs(target - observed))
+        aligned.append((row, distance, reading[1] + offset_uncertainty))
+
+    if len(aligned) != 1:
+        return make_finding(claim["claim"], "not_settled", index)
+
+    row, distance, uncertainty = aligned[0]
+    tolerance = 60 if context.get("approx") else 0
+    if distance <= tolerance + uncertainty:
+        return make_finding(
+            claim["claim"], "match", index, row["file"], row["row"], row.get("raw")
+        )
+    return make_finding(claim["claim"], "not_settled", index)
+
+
+def _decide_interval(claim, rows, index):
+    candidates = []
+    for row in rows:
+        text = row.get("note")
+        if not isinstance(text, str):
+            text = row.get("text")
+        if (not isinstance(text, str) or not _STOP_RE.search(text)
+                or not _SCENE_RE.search(text)):
+            continue
+        interval_matches = list(INTERVAL_RE.finditer(text))
+        if len(interval_matches) != 1:
+            continue
+        match = interval_matches[0]
+        unit = match.group(2).lower()
+        try:
+            observed_seconds = int(match.group(1)) * (
+                60 if unit.startswith("min") else 1
+            )
+        except ValueError:
+            continue
+        candidates.append((row, match, observed_seconds, text))
+
+    if len(candidates) != 1:
+        return make_finding(claim["claim"], "not_settled", index)
+
+    row, match, observed_seconds, source_text = candidates[0]
+    same_direction = match.group(3).lower() == claim.get("direction")
+    tolerance = 60 if claim.get("approx") else 0
+    agrees = same_direction and abs(observed_seconds - claim["seconds"]) <= tolerance
+    quote = row.get("raw")
+    if agrees:
+        return make_finding(claim["claim"], "match", index, row["file"], row["row"], quote)
+    if not claim.get("approx") and not _HEDGE_RE.search(source_text):
+        return make_finding(claim["claim"], "conflict", index, row["file"], row["row"], quote)
+    return make_finding(claim["claim"], "not_settled", index)
+
+
 def decide_claims(claims, rows):
     """Make conservative findings with leave-one-claim-out clock calibration."""
     index = build_index(rows)
@@ -98,9 +183,11 @@ def decide_claims(claims, rows):
             result = make_finding(claim["claim"], "not_checkable", index)
         elif claim.get("kind") == "time":
             result = _decide_time(claim, notes, rows, index, claims, claim_index)
+        elif claim.get("kind") == "speed":
+            result = _decide_speed(claim, rows, index, claims, claim_index)
+        elif claim.get("kind") == "interval":
+            result = _decide_interval(claim, rows, index)
         else:
-            # The available speed/dispatch/transcript records lack a reliable
-            # shared event anchor, so they cannot support a safe alignment.
             result = make_finding(claim["claim"], "not_settled", index)
         findings.append(result)
 

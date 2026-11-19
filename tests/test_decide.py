@@ -177,6 +177,67 @@ class DecisionTests(unittest.TestCase):
         result = decide_claims(claims, rows)[-1]
         self.assertEqual(result["finding"], "not_settled")
 
+    def test_transcript_speed_is_match_only_after_independent_clock_alignment(self):
+        claims = [
+            {"claim": "Observed at 12:00", "kind": "time", "event": "observation",
+             "hour": 12, "minute": 0, "approx": False},
+            {"claim": "Stopped at 12:10", "kind": "time", "event": "stop",
+             "hour": 12, "minute": 10, "approx": False},
+            {"claim": "911 call at 12:20", "kind": "time", "event": "911_call",
+             "hour": 12, "minute": 20, "approx": False},
+            {"claim": "Travelled 58 mph in a 45 zone", "kind": "speed",
+             "speed": 58, "zone": 45,
+             "context_time": {"hour": 12, "minute": 30, "approx": False}},
+        ]
+        rows = [
+            {
+                "file": "bodycam_transcript.vtt",
+                "row": number,
+                "raw": text,
+                "clock_id": "vtt:bodycam_transcript.vtt",
+                "start": start,
+                "end": start + 1,
+                "text": text,
+            }
+            for number, (start, text) in enumerate((
+                (12 * 3600 + 2 * 60, "Officer Lee: Vehicle observed."),
+                (12 * 3600 + 12 * 60, "Officer Lee: Stopped at the lot."),
+                (12 * 3600 + 22 * 60, "Dispatch: 911 call received."),
+                (12 * 3600 + 32 * 60, "Officer Lee: 58 in a 45."),
+            ), start=1)
+        ]
+
+        result = decide_claims(claims, rows)[-1]
+        self.assertEqual(result["finding"], "match")
+        self.assertEqual(result["cite"], {
+            "file": "bodycam_transcript.vtt",
+            "row": 4,
+        })
+        rows[-1]["raw"] = "Officer Lee: Not 58 in a 45."
+        rows[-1]["text"] = rows[-1]["raw"]
+        self.assertEqual(decide_claims(claims, rows)[-1]["finding"], "not_settled")
+
+    def test_explicit_single_row_interval_can_be_verified(self):
+        claim = {
+            "claim": "Unit on scene roughly 2 minutes after the stop",
+            "kind": "interval",
+            "seconds": 120,
+            "direction": "after",
+            "event": "unit_on_scene",
+            "approx": True,
+        }
+        row = {
+            "file": "notes.csv",
+            "row": 8,
+            "raw": "N-8,Dispatch,Unit on scene 2 minutes after the stop,12:18",
+            "note": "Unit on scene 2 minutes after the stop",
+        }
+
+        finding = decide_claims([claim], [row])[0]
+        self.assertEqual(finding["finding"], "match")
+        self.assertEqual(finding["cite"], {"file": "notes.csv", "row": 8})
+        self.assertIn(finding["quote"], row["raw"])
+
     def test_ambiguous_stop_notes_are_not_used_for_a_conflict(self):
         claim = {
             "claim": "Stopped at 21:16",

@@ -87,8 +87,21 @@ def extract_claims(report_text):
     for sentence in split_sentences(report_text):
         if is_header(sentence):
             continue
-        for clause in split_clauses(sentence):
-            claims.append(classify(clause))
+        sentence_claims = [classify(clause) for clause in split_clauses(sentence)]
+        for index, claim in enumerate(sentence_claims):
+            if claim["kind"] != "speed":
+                continue
+            context = next(
+                (item for item in reversed(sentence_claims[:index]) if item["kind"] == "time"),
+                None,
+            )
+            if context:
+                claim["context_time"] = {
+                    "hour": context["hour"],
+                    "minute": context["minute"],
+                    "approx": context["approx"],
+                }
+        claims.extend(sentence_claims)
     return claims
 
 

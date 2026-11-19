@@ -10,8 +10,11 @@ _EVENT_PATTERNS = (
     ("911_call", re.compile(r"\b911\b|\bcaller\b|\bcall\b", re.I)),
     ("unit_on_scene", re.compile(r"\bon scene\b|\barriv(?:ed|al)\b", re.I)),
     ("unit_dispatched", re.compile(r"\bdispatched\b", re.I)),
-    ("stop", re.compile(r"\bstopp?ed\b|\bpulling in\b|\bpulled (?:in|over|into)\b", re.I)),
+    ("stop", re.compile(r"\bstop(?:ped|ping)?\b|\bpulling in\b|\bpulled (?:in|over|into)\b", re.I)),
     ("observation", re.compile(r"\bobserv(?:ed|ation)\b|\bfirst saw\b|\bspotted\b", re.I)),
+)
+_SPEED_TEXT_RE = re.compile(
+    r"\b(\d{1,3})\s*(?:mph\s+)?in\s+(?:a|the)\s+(\d{1,3})\b", re.I
 )
 
 
@@ -108,30 +111,69 @@ def _signed_day_difference(left, right):
     return (left - right + DAY_SECONDS / 2) % DAY_SECONDS - DAY_SECONDS / 2
 
 
+def _claim_anchor(claim):
+    if (claim.get("kind") == "time" and claim.get("event")
+            and not claim.get("approx")):
+        return ("event", claim["event"]), (
+            int(claim["hour"]) * 3600 + int(claim["minute"]) * 60
+        )
+    if (claim.get("kind") == "speed" and claim.get("zone") is not None
+            and not claim.get("approx") and isinstance(claim.get("context_time"), dict)
+            and not claim["context_time"].get("approx")):
+        context = claim["context_time"]
+        return ("speed", claim["speed"], claim["zone"]), (
+            int(context["hour"]) * 3600 + int(context["minute"]) * 60
+        )
+    return None
+
+
+def speed_zone(row):
+    speed, zone = row.get("speed"), row.get("zone")
+    if isinstance(speed, int) and not isinstance(speed, bool) and isinstance(zone, int):
+        return speed, zone
+    text = row.get("text")
+    match = _SPEED_TEXT_RE.search(text) if isinstance(text, str) else None
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None
+
+
+def _row_anchors(row):
+    event = event_of(row)
+    if event:
+        yield ("event", event)
+    speed = speed_zone(row)
+    if speed:
+        yield ("speed", speed[0], speed[1])
+
+
 def estimate_report_offsets(claims, rows, excluded_claim):
-    """Calibrate each record clock against three other exact report event times."""
-    event_counts = {}
-    for claim in claims:
-        if claim.get("kind") == "time" and claim.get("event"):
-            event_counts[claim["event"]] = event_counts.get(claim["event"], 0) + 1
+    """Calibrate clocks from three other exact, unique report-to-record events."""
+    claim_anchors = [_claim_anchor(claim) for claim in claims]
+    anchor_counts = {}
+    for anchor in claim_anchors:
+        if anchor:
+            anchor_counts[anchor[0]] = anchor_counts.get(anchor[0], 0) + 1
 
     rows_by_domain = {}
     for row in rows:
         reading = clock_reading(row)
-        event = event_of(row)
-        if reading is None or event is None:
+        if reading is None:
             continue
-        rows_by_domain.setdefault(clock_domain(row), []).append((event, row, reading))
+        for signature in _row_anchors(row):
+            rows_by_domain.setdefault(clock_domain(row), []).append(
+                (signature, row, reading)
+            )
 
     anchors = {}
     for claim_index, claim in enumerate(claims):
-        if (claim_index == excluded_claim or claim.get("kind") != "time"
-                or claim.get("approx") or not claim.get("event")
-                or event_counts.get(claim["event"]) != 1):
+        anchor = claim_anchors[claim_index]
+        if (claim_index == excluded_claim or anchor is None
+                or anchor_counts.get(anchor[0]) != 1):
             continue
-        report_time = int(claim["hour"]) * 3600 + int(claim["minute"]) * 60
+        signature, report_time = anchor
         for domain, entries in rows_by_domain.items():
-            candidates = [entry for entry in entries if entry[0] == claim["event"]]
+            candidates = [entry for entry in entries if entry[0] == signature]
             if len(candidates) != 1:
                 continue
             _, row, (record_time, precision) = candidates[0]

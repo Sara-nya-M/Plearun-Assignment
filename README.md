@@ -13,7 +13,10 @@ that the cited row exists and the quote is an exact substring of its raw text.
 Clock offsets are estimated only from at least three unique, exact, unhedged
 event-time claims other than the claim being evaluated. The corresponding
 record events must be unambiguous and their offsets consistent. Otherwise the
-clock is not aligned. Record text is parsed as data and never treated as
+clock is not aligned. A speed finding also requires a uniquely aligned
+Officer Lee transcript cue; camera readings alone do not identify the
+reported vehicle. An interval is settled only if one row directly states both
+events and the duration. Record text is parsed as data and never treated as
 instructions.
 
 ## Three hardest decisions
